@@ -7,6 +7,10 @@ from tkinter import simpledialog, messagebox
 import keyring
 import pyperclip
 import time
+import pystray
+from PIL import Image
+import os
+import sys
 
 # --------------------
 # 常數與 Win32 API
@@ -111,14 +115,23 @@ def message_loop(stop_event, on_account_hotkey, on_password_hotkey):
         user32.UnregisterHotKey(None, HOTKEY_ID_ACCOUNT)
         user32.UnregisterHotKey(None, HOTKEY_ID_PASSWORD)
 
+def resource_path(relative_path):
+    """獲取資源在執行檔或開發環境中的正確路徑"""
+    if hasattr(sys, '_MEIPASS'):  # PyInstaller 打包後執行時會有這個屬性
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 # --------------------
 # GUI (Tkinter)
 # --------------------
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("QuickPaste (Local, Windows)")
+        root.title("神奇小工具")
         root.geometry("320x200")
+        # icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+        # root.iconbitmap(icon_path)
+        root.iconbitmap(resource_path("icon.ico"))
         root.resizable(False, False)
 
         self.lbl_acc = tk.Label(root, text="帳號: (未設定)")
@@ -131,7 +144,7 @@ class App:
         btn_set_pwd = tk.Button(root, text="設定密碼", command=self.set_password)
         btn_set_pwd.pack()
 
-        tk.Label(root, text="熱鍵：Ctrl+Alt+1 = 帳號，Ctrl+Alt+2 = 密碼", fg="gray").pack(pady=(8,0))
+        # tk.Label(root, text="熱鍵：Ctrl+shitf+z = 帳號，Ctrl+Alt+2 = 密碼", fg="gray").pack(pady=(8,0))
 
         tk.Button(root, text="清空儲存 (從 Credential Manager 移除)", command=self.clear_storage).pack(pady=(8,0))
 
@@ -144,6 +157,7 @@ class App:
         t.start()
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        root.bind("<Unmap>", self.on_minimize)
 
     def refresh_labels(self):
         acc = load_secret("account")
@@ -197,6 +211,41 @@ class App:
         # stop message loop
         self.stop_event.set()
         # wait briefly for thread to end
+        time.sleep(0.1)
+        self.root.destroy()
+
+    def on_minimize(self, event):
+        """當使用者最小化視窗時，隱藏到托盤"""
+        if self.root.state() == "iconic":
+            self.root.withdraw()
+            self.show_tray_icon()
+
+    def show_tray_icon(self):
+        """建立托盤圖示"""
+        # icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        # image = Image.open(icon_path)
+
+        def show_window(icon=None, item=None):
+            """顯示主視窗"""
+            self.root.deiconify()
+            self.root.after(10, self.root.lift)
+
+        def quit_app(icon, item):
+            icon.stop()
+            self.root.after(0, self.root.destroy)
+
+        menu = pystray.Menu(
+            pystray.MenuItem("開啟 QuickPaste", show_window),
+            pystray.MenuItem("退出", quit_app)
+        )
+
+        self.icon = pystray.Icon("QuickPaste", Image.open(resource_path("icon.ico")), "QuickPaste", menu)
+
+        t = threading.Thread(target=self.icon.run, daemon=True)
+        t.start()
+
+    def on_close(self):
+        self.stop_event.set()
         time.sleep(0.1)
         self.root.destroy()
 
