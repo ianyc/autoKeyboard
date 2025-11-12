@@ -12,6 +12,23 @@ from PIL import Image
 import os
 import sys
 
+
+# define total count of hotkey (>7要再補VK_LETTERS)
+def ask_hotkey_count():
+    root = tk.Tk()
+    root.withdraw() # 不顯示主視窗
+    while True:
+        val = simpledialog.askstring(" ", "請輸入字詞數量 (1~7):")
+        if val is None:
+            sys.exit(0)  # 使用者按取消就結束程式
+        if val.isdigit() and 1 <= int(val) <= 7:
+            root.destroy()
+            return int(val)
+        else:
+            messagebox.showerror("Be Careful", "僅能輸入1~7")
+
+TOTAL_HOTKEY_COUNT = ask_hotkey_count()
+
 # --------------------
 # 常數與 Win32 API
 # --------------------
@@ -24,21 +41,10 @@ VK_V = 0x56
 
 KEYEVENTF_KEYUP = 0x0002
 
-# total count of hotkey
-COUNT = 3
-
 # hotkey modifiers for RegisterHotKey
-MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
-HOTKEY_ID_STR1 = 1
-HOTKEY_ID_STR2 = 2
-HOTKEY_ID_STR3 = 3
-VK_1 = 0x31
-VK_2 = 0x32
-VK_Z = 0x5A
-VK_X = 0x58
-VK_C = 0x43
+VK_LETTERS = [0x5A, 0x58, 0x31, 0x32, 0x33, 0x34, 0x35]  # Z, X, 1, 2, 3, 4, 5
 
 SERVICE_NAME = "QuickPasteLocal"  # 用於 keyring
 
@@ -52,7 +58,6 @@ CLEAR_CLIP_AFTER = 5.0  # 貼上後多少秒清空剪貼簿（若為 0 則不清
 # keyring 存取
 # --------------------
 def save_secret(key: str, value: str):
-    print(key)
     """把 value 存到 Windows Credential Manager (keyring)"""
     # keyring.set_password(service, username, password)
     keyring.set_password(f"{SERVICE_NAME}_{key}", key, value)
@@ -95,12 +100,11 @@ def put_on_clipboard_and_paste(text: str):
 # --------------------
 def message_loop(stop_event, on_str_hotkey):
     # register hotkeys
-    if not user32.RegisterHotKey(None, HOTKEY_ID_STR1, MOD_CONTROL | MOD_SHIFT, VK_Z):
-        print("RegisterHotKey str1 failed")
-    if not user32.RegisterHotKey(None, HOTKEY_ID_STR2, MOD_CONTROL | MOD_SHIFT, VK_X):
-        print("RegisterHotKey str2 failed")
-    if not user32.RegisterHotKey(None, HOTKEY_ID_STR3, MOD_CONTROL | MOD_SHIFT, VK_C):
-        print("RegisterHotKey str3 failed")
+    for i in range(TOTAL_HOTKEY_COUNT):
+        hotkey_id = i + 1
+        vk = VK_LETTERS[i]
+        if not user32.RegisterHotKey(None, hotkey_id, MOD_CONTROL | MOD_SHIFT, vk):
+            print(f"RegisterHotKey str{i+1} failed")
 
     try:
         msg = wintypes.MSG()
@@ -108,12 +112,9 @@ def message_loop(stop_event, on_str_hotkey):
             has_msg = user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1)  # PM_REMOVE=1, non-blocking
             if has_msg:
                 if msg.message == WM_HOTKEY:
-                    if msg.wParam == HOTKEY_ID_STR1:
-                        on_str_hotkey("str1")
-                    elif msg.wParam == HOTKEY_ID_STR2:
-                        on_str_hotkey("str2")
-                    elif msg.wParam == HOTKEY_ID_STR3:
-                        on_str_hotkey("str3")
+                    idx = msg.wParam - 1
+                    if 0 <= idx < TOTAL_HOTKEY_COUNT:
+                        on_str_hotkey(f"str{idx+1}")
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             else:
@@ -121,9 +122,8 @@ def message_loop(stop_event, on_str_hotkey):
                 time.sleep(0.05)
     finally:
         # unregister hotkeys
-        user32.UnregisterHotKey(None, HOTKEY_ID_STR1)
-        user32.UnregisterHotKey(None, HOTKEY_ID_STR2)
-        user32.UnregisterHotKey(None, HOTKEY_ID_STR3)
+        for i in range(TOTAL_HOTKEY_COUNT):
+            user32.UnregisterHotKey(None, i + 1)
 
 def resource_path(relative_path):
     """獲取資源在執行檔或開發環境中的正確路徑"""
@@ -139,79 +139,72 @@ class App:
         self.root = root
         root.title("神奇小工具")
         width = 300
-        height = 250
-        root.geometry(f"{width}x{height}")
+        height = 100 + TOTAL_HOTKEY_COUNT*60
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        x = int((screen_width / 2) - (width / 2))
+        y = int((screen_height / 2) - (height / 2))
+        root.geometry(f"{width}x{height}+{x}+{y}")
         # icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
         # root.iconbitmap(icon_path)
         root.iconbitmap(resource_path("icon.ico"))
         root.resizable(False, False)
 
-        self.lbl_str1 = tk.Label(root, text="字詞1: (未設定)")
-        self.lbl_str1.pack(pady=(12,4))
-        btn_set_str1 = tk.Button(root, text="設定字詞1", command=lambda: self.set_str("str1"))
-        btn_set_str1.pack()
+        self.labels = []
+        self.buttons = []
+        for i in range(TOTAL_HOTKEY_COUNT):
+            name = f"str{i+1}"
+            lbl = tk.Label(root, text=f"字詞{i+1}: (未設定)")
+            lbl.pack(pady=(12 if i == 0 else 6, 4))
+            btn = tk.Button(root, text=f"設定字詞{i+1}", command=lambda i=i: self.set_str(i+1))
+            btn.pack()
+            self.labels.append(lbl)
+            self.buttons.append(btn)
 
-        self.lbl_str2 = tk.Label(root, text="字詞2: (未設定)")
-        self.lbl_str2.pack(pady=(12,4))
-        btn_set_str2 = tk.Button(root, text="設定字詞2", command=lambda: self.set_str("str2"))
-        btn_set_str2.pack()
+        tk.Button(root, text="☆★ 清除所有字詞資料 ★☆", command=self.clear_storage).pack(pady=(10,0))
 
-        self.lbl_str3 = tk.Label(root, text="字詞3: (未設定)")
-        self.lbl_str3.pack(pady=(12,4))
-        btn_set_str3 = tk.Button(root, text="設定字詞3", command=lambda: self.set_str("str3"))
-        btn_set_str3.pack()
-
-        # tk.Label(root, text="熱鍵：Ctrl+shitf+z = 帳號，Ctrl+Alt+2 = 密碼", fg="gray").pack(pady=(8,0))
-
-        tk.Button(root, text="清空資料 (從 Credential Manager 移除)", command=self.clear_storage).pack(pady=(8,0))
+        tk.Label(root, text="組合鍵: Ctrl+Shift", fg="gray").pack(pady=(8,0))
+        TEXTS = ["z", "x", "1", "2", "3", "4", "5"]
+        hotkey_text = "熱鍵: " + ", ".join(TEXTS[:TOTAL_HOTKEY_COUNT])
+        tk.Label(root, text=hotkey_text, fg="gray").pack(pady=(0,0))
 
         # load current
         self.refresh_labels()
 
         # start hotkey message loop in background thread
         self.stop_event = threading.Event()
-        t = threading.Thread(
-            target=message_loop,
-            args=(
-                self.stop_event,
-                self.on_str_hotkey,
-            ),
-            daemon=True
-        )
+        t = threading.Thread(target=message_loop, args=(self.stop_event, self.on_str_hotkey), daemon=True)
         t.start()
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.bind("<Unmap>", self.on_minimize)
 
     def refresh_labels(self):
-        str1 = load_secret("str1")
-        str2 = load_secret("str2")
-        str3 = load_secret("str3")
-        self.lbl_str1.config(text=f"字詞1: {str1[:6] + '...' if str1 else '(未設定)'}")
-        self.lbl_str2.config(text=f"字詞2: {str2[:6] + '...' if str2 else '(未設定)'}")
-        self.lbl_str3.config(text=f"字詞3: {str3[:6] + '...' if str3 else '(未設定)'}")
+        for i, lbl in enumerate(self.labels):
+            key = f"str{i+1}"
+            val = load_secret(key)
+            lbl.config(text=f"字詞{i+1}: {val[:6] + '...' if val else '(未設定)'}")
+
+            if val:
+                self.buttons[i].config(state="disabled", bg="lightgray")
+            else:
+                self.buttons[i].config(state="normal", bg="SystemButtonFace")
 
     def set_str(self, target):
-        val = simpledialog.askstring("設定字詞", f"請輸入{target}", parent=self.root)
+        val = simpledialog.askstring("設定字詞", f"請輸入字詞{target}", parent=self.root)
         if val is not None:
-            save_secret(target, val)
+            save_secret(f"str{target}", val)
             self.refresh_labels()
 
     def clear_storage(self):
         # keyring delete_password may raise depending backend; handle gracefully
-        try:
-            keyring.delete_password(f"{SERVICE_NAME}_str1", "str1")
-        except Exception:
-            pass
-        try:
-            keyring.delete_password(f"{SERVICE_NAME}_str2", "str2")
-        except Exception:
-            pass
-        try:
-            keyring.delete_password(f"{SERVICE_NAME}_str3", "str3")
-        except Exception:
-            pass
-        messagebox.showinfo("Oh My God", "已從 Credential Manager 清除所有字詞資料")
+        for i in range(TOTAL_HOTKEY_COUNT):
+            key = f"str{i+1}"
+            try:
+                keyring.delete_password(f"{SERVICE_NAME}_{key}", key)
+            except Exception:
+                pass
+        # messagebox.showinfo("Oh My God", "已從 Credential Manager 清除所有字詞資料")
         self.refresh_labels()
 
     def on_str_hotkey(self, target):
@@ -225,6 +218,8 @@ class App:
     def on_close(self):
         # stop message loop
         self.stop_event.set()
+        # 清空所有儲存的字詞資料
+        self.clear_storage()
         # wait briefly for thread to end
         time.sleep(0.1)
         self.root.destroy()
@@ -258,12 +253,6 @@ class App:
 
         t = threading.Thread(target=self.icon.run, daemon=True)
         t.start()
-
-    def on_close(self):
-        self.stop_event.set()
-        time.sleep(0.1)
-        self.root.destroy()
-
 
 if __name__ == "__main__":
     root = tk.Tk() # 建立UI視窗
